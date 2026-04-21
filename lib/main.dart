@@ -3,35 +3,25 @@ import 'dart:async';
 import 'dart:math';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // 개인 저장용
-
-final DateTime startDate = DateTime(2026, 4, 20);
+import 'package:shared_preferences/shared_preferences.dart';
+import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
-    options: const FirebaseOptions(
-      apiKey: "AIzaSyBLynU_hVQXyzUXD9dYTVYaF8_-c9-8a9Y",
-      authDomain: "church-prayer-app-57370.firebaseapp.com",
-      projectId: "church-prayer-app-57370",
-      storageBucket: "church-prayer-app-57370.firebasestorage.app",
-      messagingSenderId: "19817451561",
-      appId: "1:19817451561:web:166687df2ec2a373648c38",
-      measurementId: "G-4Y2B1CZ6YB",
-      databaseURL: "https://church-prayer-app-57370-default-rtdb.asia-southeast1.firebasedatabase.app",
-    ),
+    options: DefaultFirebaseOptions.currentPlatform,
   );
-  runApp(const PrayerTimerApp());
+  runApp(const PrayerApp());
 }
 
-class PrayerTimerApp extends StatelessWidget {
-  const PrayerTimerApp({super.key});
+class PrayerApp extends StatelessWidget {
+  const PrayerApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
       title: '21일 특별 기도 타이머',
-      theme: ThemeData(brightness: Brightness.dark),
+      theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
       home: const PrayerTimerPage(),
     );
   }
@@ -39,56 +29,43 @@ class PrayerTimerApp extends StatelessWidget {
 
 class PrayerTimerPage extends StatefulWidget {
   const PrayerTimerPage({super.key});
+
   @override
   State<PrayerTimerPage> createState() => _PrayerTimerPageState();
 }
 
-class _PrayerTimerPageState extends State<PrayerTimerPage> with TickerProviderStateMixin {
-  final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
-  late AnimationController _potController;
-  late AnimationController _waterController;
-  
-  int _seconds = 0; 
-  Timer? _timer;
+class _PrayerTimerPageState extends State<PrayerTimerPage> with SingleTickerProviderStateMixin {
+  int _seconds = 0;
   bool _isRunning = false;
-  int globalTotalMinutes = 0;
+  Timer? _timer;
+  final String _myId = DateTime.now().millisecondsSinceEpoch.toString();
+  final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
+
   int onlinePrayers = 0;
-  int myTotalMinutes = 0; // 개인 누적 시간
-  
-  final String _myId = Random().nextInt(1000000).toString(); // 임시 이름표
-  final List<Point> _waterDrops = [];
+  int globalTotalMinutes = 0;
+  int myTotalMinutes = 0;
+
+  List<Point<double>> _waterDrops = [];
+  late AnimationController _waterController;
 
   @override
   void initState() {
     super.initState();
-    _loadMyTime(); // 내 기도시간 불러오기
-    _setupPresence(); // 실시간 접속자 관리
-    
-    _potController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 2),
-    )..repeat(reverse: true);
-
-    _waterController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 100),
-    )..addListener(_generateWaterDrop);
+    _loadMyTotalMinutes();
+    _setupPresence();
+    _waterController = AnimationController(vsync: this, duration: const Duration(seconds: 1));
   }
 
-  // 개인 기도시간 로드
-  Future<void> _loadMyTime() async {
+  Future<void> _loadMyTotalMinutes() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       myTotalMinutes = prefs.getInt('my_prayer_minutes') ?? 0;
     });
   }
 
-  // 실시간 접속자 핵심 로직 (이름표 방식)
+  // 접속자 관리: 시작 버튼 누를 때만 기록하도록 변경
   void _setupPresence() {
-    final presenceRef = _dbRef.child('presence');
-    
-    // 1. 접속자 명단 변화 감시
-    presenceRef.onValue.listen((event) {
+    _dbRef.child('presence').onValue.listen((event) {
       if (mounted && event.snapshot.value != null) {
         final data = event.snapshot.value as Map<dynamic, dynamic>;
         setState(() => onlinePrayers = data.length);
@@ -97,11 +74,6 @@ class _PrayerTimerPageState extends State<PrayerTimerPage> with TickerProviderSt
       }
     });
 
-    // 2. 나를 명단에 추가 & 연결 끊기면 삭제 예약
-    presenceRef.child(_myId).set(true);
-    presenceRef.child(_myId).onDisconnect().remove();
-
-    // 3. 공동체 전체 누적 시간 감시
     _dbRef.child('stats/total_minutes').onValue.listen((event) {
       if (mounted && event.snapshot.value != null) {
         setState(() => globalTotalMinutes = int.parse(event.snapshot.value.toString()));
@@ -109,166 +81,145 @@ class _PrayerTimerPageState extends State<PrayerTimerPage> with TickerProviderSt
     });
   }
 
+  // 물줄기 생성: 항아리 입구에 맞춰 풍성하게(80~100 범위)
   void _generateWaterDrop() {
     if (mounted && _isRunning) {
       setState(() {
-        // 물줄기를 중앙 입구로 모으기 (폭 좁게 설정)
-        for(int i=0; i<2; i++) {
-          _waterDrops.add(Point(85 + Random().nextDouble() * 10, 0));
+        for (int i = 0; i < 5; i++) {
+          _waterDrops.add(Point(80 + Random().nextDouble() * 20, 0));
         }
       });
     }
   }
 
+  // 물줄기 이동: 항아리 입구 높이(80)에서 멈추도록 수정
   void _moveWaterDrops() {
-    if (mounted && _isRunning) {
+    if (mounted) {
       setState(() {
-        _waterDrops.removeWhere((drop) => drop.y > 180);
-        for (int i = 0; i < _waterDrops.length; i++) {
-          _waterDrops[i] = Point(_waterDrops[i].x, _waterDrops[i].y + 7);
+        List<Point<double>> nextDrops = [];
+        for (var drop in _waterDrops) {
+          if (drop.y < 80) {
+            nextDrops.add(Point(drop.x, drop.y + 2));
+          }
         }
+        _waterDrops = nextDrops;
       });
     }
   }
 
   void _toggleTimer() async {
+    final presenceRef = _dbRef.child('presence').child(_myId);
+
     if (_isRunning) {
+      // 기도 중단 시 인원 카운트 제외
+      presenceRef.remove();
+      
       int prayedMinutes = (_seconds / 60).ceil();
-      // 공동체 시간 업데이트
       _dbRef.child('stats/total_minutes').set(ServerValue.increment(prayedMinutes));
       
-      // 내 시간 저장
       final prefs = await SharedPreferences.getInstance();
       setState(() {
         myTotalMinutes += prayedMinutes;
         prefs.setInt('my_prayer_minutes', myTotalMinutes);
+        _isRunning = false;
       });
-      
       _timer?.cancel();
       _waterController.stop();
       _waterDrops.clear();
-      _seconds = 0; 
+      _seconds = 0;
     } else {
+      // 기도 시작 시에만 인원 카운트 등록
+      presenceRef.set(true);
+      presenceRef.onDisconnect().remove();
+
+      setState(() => _isRunning = true);
       _waterController.repeat();
+      
       Timer.periodic(const Duration(milliseconds: 20), (timer) {
         if (!_isRunning) { timer.cancel(); return; }
         _moveWaterDrops();
+        if (Random().nextInt(5) == 0) _generateWaterDrop();
       });
+
       _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
         setState(() => _seconds++);
       });
     }
-    setState(() => _isRunning = !_isRunning);
+  }
+
+  String _formatTime(int totalSeconds) {
+    int minutes = totalSeconds ~/ 60;
+    int seconds = totalSeconds % 60;
+    return "${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}";
   }
 
   @override
   Widget build(BuildContext context) {
-    int currentDay = (DateTime.now().difference(startDate).inDays + 1).clamp(1, 21);
-
     return Scaffold(
-      body: Container(
-        width: double.infinity,
-        decoration: const BoxDecoration(
-          image: DecorationImage(
-            image: AssetImage('assets/images/prayer_bg.jpg'),
-            fit: BoxFit.cover,
-            colorFilter: ColorFilter.mode(Colors.black54, BlendMode.darken),
-          ),
-        ),
-        child: Column(
-          children: [
-            const SizedBox(height: 60),
-            const Text("21일 특별 기도 타이머", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 20),
-            Wrap(
-              spacing: 8, runSpacing: 8,
-              children: List.generate(21, (index) {
-                int dayNum = index + 1;
-                bool isPast = dayNum < currentDay;
-                bool isToday = dayNum == currentDay;
-                return Container(
-                  width: 45, height: 45,
-                  decoration: BoxDecoration(
-                    color: isToday ? Colors.orange : (isPast ? Colors.blue : Colors.white24),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Center(child: Text("${dayNum}일", style: const TextStyle(fontSize: 12))),
-                );
-              }),
-            ),
-            const SizedBox(height: 30),
-            Text("공동체 누적: ${globalTotalMinutes ~/ 60}시간 ${globalTotalMinutes % 60}분",
-                style: const TextStyle(fontSize: 18, backgroundColor: Colors.black45)),
-            const SizedBox(height: 5),
-            Text("나의 누적 기도: ${myTotalMinutes ~/ 60}시간 ${myTotalMinutes % 60}분",
-                style: const TextStyle(fontSize: 16, color: Colors.yellowAccent, backgroundColor: Colors.black45)),
-            
-            Expanded(
-              child: Center(
-                child: Text(
-                  "${(_seconds ~/ 60).toString().padLeft(2, '0')}:${(_seconds % 60).toString().padLeft(2, '0')}",
-                  style: const TextStyle(fontSize: 80, fontWeight: FontWeight.w100, color: Colors.white),
-                ),
+      body: Stack(
+        children: [
+          Container(
+            decoration: const BoxDecoration(
+              image: DecorationImage(
+                image: AssetImage('assets/images/prayer_bg.jpg'),
+                fit: BoxFit.cover,
               ),
             ),
-
-            AnimatedBuilder(
-              animation: _potController,
-              builder: (context, child) {
-                return Transform.translate(
-                  offset: Offset(0, 10 * _potController.value),
+          ),
+          Container(color: Colors.black.withOpacity(0.5)),
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text("21일 특별 기도 타이머", style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 40),
+                Text("공동체 누적: ${globalTotalMinutes ~/ 60}시간 ${globalTotalMinutes % 60}분", style: const TextStyle(color: Colors.white70, fontSize: 18)),
+                Text("나의 누적 기도: ${myTotalMinutes ~/ 60}시간 ${myTotalMinutes % 60}분", style: const TextStyle(color: Colors.yellowAccent, fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 30),
+                Text(_formatTime(_seconds), style: const TextStyle(color: Colors.white, fontSize: 80, fontWeight: FontWeight.w300)),
+                const SizedBox(height: 20),
+                // 물줄기 및 항아리 애니메이션 영역
+                SizedBox(
+                  width: 200,
+                  height: 250,
                   child: Stack(
-                    alignment: Alignment.topCenter,
                     children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: 40),
-                        child: Image.asset('assets/images/prayer_pot_256.png', width: 180, height: 180),
-                      ),
-                      SizedBox(
-                        width: 180, height: 200, 
-                        child: Stack(
-                          children: _waterDrops.map((drop) {
-                            return Positioned(
-                              left: drop.x.toDouble(), top: drop.y.toDouble(),
-                              child: Container(
-                                width: 4, height: 12,
-                                decoration: BoxDecoration(
-                                  color: Colors.blueAccent.withOpacity(0.8),
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
-                              ),
-                            );
-                          }).toList(),
-                        ),
+                      ..._waterDrops.map((drop) => Positioned(
+                        left: drop.x,
+                        top: drop.y,
+                        child: Container(width: 3, height: 10, decoration: BoxDecoration(color: Colors.blueAccent.withOpacity(0.6), borderRadius: BorderRadius.circular(2))),
+                      )),
+                      Positioned(
+                        bottom: 0,
+                        left: 25,
+                        child: Image.asset('assets/images/pot.png', width: 150),
                       ),
                     ],
                   ),
-                );
-              },
+                ),
+                const SizedBox(height: 40),
+                Text("현재 함께 기도 중: $onlinePrayers명", style: const TextStyle(color: Colors.white, fontSize: 16)),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: _toggleTimer,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _isRunning ? Colors.redAccent : Colors.blueAccent,
+                    padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15),
+                  ),
+                  child: Text(_isRunning ? "기도 멈추기" : "기도 시작", style: const TextStyle(color: Colors.white, fontSize: 20)),
+                ),
+              ],
             ),
-            const SizedBox(height: 10),
-            Text("현재 함께 기도 중: $onlinePrayers명", style: const TextStyle(fontSize: 16)),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _toggleTimer,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _isRunning ? Colors.red : Colors.blueAccent,
-                minimumSize: const Size(250, 60),
-              ),
-              child: Text(_isRunning ? "기도 멈추기" : "기도 시작", style: const TextStyle(fontSize: 20)),
-            ),
-            const SizedBox(height: 50),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
   @override
   void dispose() {
-    _potController.dispose();
-    _waterController.dispose();
     _timer?.cancel();
+    _waterController.dispose();
     super.dispose();
   }
 }
