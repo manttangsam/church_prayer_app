@@ -36,6 +36,8 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter_dnd: ^0.1.4+1
   shared_preferences: ^2.5.3
+  firebase_core: ^4.7.0
+  firebase_database: ^12.3.0
 
 dev_dependencies:
   flutter_test:
@@ -60,10 +62,8 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/images/prayer_pot_64.png
-    - assets/images/prayer_pot_128.png
     - assets/images/prayer_pot_256.png
-    - assets/images/prayer_bg.jpg.jpg
+    - assets/images/prayer_bg.jpg
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
