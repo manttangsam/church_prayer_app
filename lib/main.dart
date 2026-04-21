@@ -11,7 +11,7 @@ void main() async {
   try {
     await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   } catch (e) {
-    debugPrint("Firebase 초기화 중...");
+    debugPrint("Firebase 초기화 오류: $e");
   }
   runApp(const PrayerApp());
 }
@@ -34,16 +34,14 @@ class PrayerTimerPage extends StatefulWidget {
 class _PrayerTimerPageState extends State<PrayerTimerPage> with SingleTickerProviderStateMixin {
   int _seconds = 0;
   bool _isRunning = false;
-  
-  // 날짜 관련 변수
   late int _today; 
   Timer? _timer;
   late AnimationController _shakeController;
   final ScrollController _scrollController = ScrollController();
   
+  // 데이터베이스 참조 (경로 최적화)
   final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
-  final String _myId = DateTime.now().millisecondsSinceEpoch.toString();
-
+  
   int onlinePrayers = 0;
   int globalTotalMinutes = 0;
   int myTotalMinutes = 0;
@@ -53,22 +51,20 @@ class _PrayerTimerPageState extends State<PrayerTimerPage> with SingleTickerProv
   void initState() {
     super.initState();
     
-    // [날짜 자동 계산 로직] 4월 20일 0시 기준
+    // 날짜 계산
     DateTime startDate = DateTime(2026, 4, 20); 
     DateTime now = DateTime.now();
-    // 시작일과의 차이를 구해서 오늘이 며칠차인지 계산 (최소 1일, 최대 21일)
     int dayDiff = now.difference(startDate).inDays + 1;
     _today = dayDiff.clamp(1, 21); 
 
     _loadMyTotalMinutes();
-    _setupPresence();
+    _setupPresence(); // 실시간 데이터 연결
     
     _shakeController = AnimationController(
       duration: const Duration(milliseconds: 500),
       vsync: this,
     )..repeat(reverse: true);
 
-    // 화면이 그려진 후 오늘 날짜로 자동 스크롤
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients && _today > 4) {
         double targetPosition = (_today - 1) * 60.0;
@@ -86,26 +82,38 @@ class _PrayerTimerPageState extends State<PrayerTimerPage> with SingleTickerProv
     setState(() => myTotalMinutes = prefs.getInt('my_prayer_minutes') ?? 0);
   }
 
+  // [수정 포인트 1] 실시간 인원 및 누적 시간 감시 로직 통일
   void _setupPresence() {
-    _dbRef.child('presence').onValue.listen((event) {
-      if (mounted) {
-        final data = event.snapshot.value as Map?;
-        setState(() => onlinePrayers = data?.length ?? 0);
+    // 거실(루트)에 있는 online_count를 직접 읽어옵니다
+    _dbRef.child('online_count').onValue.listen((event) {
+      if (mounted && event.snapshot.value != null) {
+        setState(() {
+          onlinePrayers = int.tryParse(event.snapshot.value.toString()) ?? 0;
+        });
       }
     });
-    _dbRef.child('stats/total_minutes').onValue.listen((event) {
+
+    // 거실(루트)에 있는 total_minutes를 직접 읽어옵니다
+    _dbRef.child('total_minutes').onValue.listen((event) {
       if (mounted && event.snapshot.value != null) {
-        setState(() => globalTotalMinutes = int.tryParse(event.snapshot.value.toString()) ?? 0);
+        setState(() {
+          globalTotalMinutes = int.tryParse(event.snapshot.value.toString()) ?? 0;
+        });
       }
     });
   }
 
+  // [수정 포인트 2] 기도 시작/종료 시 서버 숫자 증감 로직
   void _toggleTimer() async {
     if (_isRunning) {
-      _dbRef.child('presence').child(_myId).remove().catchError((e) {});
+      // 기도 멈춤 시: 서버 인원수 1 감소
+      _dbRef.child('online_count').set(ServerValue.increment(-1));
+
       int prayedMinutes = (_seconds / 60).round(); 
       if (prayedMinutes > 0) {
-        _dbRef.child('stats/total_minutes').set(ServerValue.increment(prayedMinutes)).catchError((e) {});
+        // 공동체 누적 시간 합산
+        _dbRef.child('total_minutes').set(ServerValue.increment(prayedMinutes));
+        
         final prefs = await SharedPreferences.getInstance();
         setState(() {
           myTotalMinutes += prayedMinutes;
@@ -119,17 +127,18 @@ class _PrayerTimerPageState extends State<PrayerTimerPage> with SingleTickerProv
       });
       _timer?.cancel();
     } else {
-      _dbRef.child('presence').child(_myId).set(true).catchError((e) {});
-      _dbRef.child('presence').child(_myId).onDisconnect().remove();
+      // 기도 시작 시: 서버 인원수 1 증가
+      _dbRef.child('online_count').set(ServerValue.increment(1));
+      
+      // 비정상 종료(앱 강제종료 등) 시 인원수 자동 감소 예약
+      _dbRef.child('online_count').onDisconnect().set(ServerValue.increment(-1));
+
       setState(() => _isRunning = true);
       _timer = Timer.periodic(const Duration(seconds: 1), (t) {
         setState(() {
           _seconds++;
           _moveWaterDrops();
-          // 풍성한 물방울 생성
           _waterDrops.add(Point(85 + Random().nextDouble() * 30, 0));
-          _waterDrops.add(Point(85 + Random().nextDouble() * 30, -25));
-          _waterDrops.add(Point(85 + Random().nextDouble() * 30, -50));
         });
       });
     }
@@ -184,6 +193,7 @@ class _PrayerTimerPageState extends State<PrayerTimerPage> with SingleTickerProv
                   ),
                 ),
                 const Spacer(),
+                // 공동체 누적 시간 표시
                 Text("공동체 누적: ${globalTotalMinutes ~/ 60}시간 ${globalTotalMinutes % 60}분", style: const TextStyle(color: Colors.white70, fontSize: 16)),
                 Text("나의 누적 기도: ${myTotalMinutes ~/ 60}시간 ${myTotalMinutes % 60}분", style: const TextStyle(color: Colors.yellowAccent, fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 30),
@@ -222,7 +232,8 @@ class _PrayerTimerPageState extends State<PrayerTimerPage> with SingleTickerProv
                   ),
                 ),
                 const SizedBox(height: 10),
-                Text("현재 함께 기도 중: ${onlinePrayers == 0 && _isRunning ? 1 : onlinePrayers}명", style: const TextStyle(color: Colors.white, fontSize: 16)),
+                // 실시간 인원 표시
+                Text("현재 함께 기도 중: ${onlinePrayers}명", style: const TextStyle(color: Colors.white, fontSize: 16)),
                 const SizedBox(height: 30),
                 ElevatedButton(
                   onPressed: _toggleTimer,

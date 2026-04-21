@@ -7,11 +7,11 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyAs8O99-xxxx-xxxx', // 형님의 실제 키는 보안상 가려져 보일 수 있으니 이전에 쓰던 코드를 참고하세요
-    appId: '1:1052643534567:web:xxxx',
-    messagingSenderId: '1052643534567',
-    projectId: 'church-prayer-app',
-    databaseURL: 'https://church-prayer-app-default-rtdb.firebaseio.com',
-    storageBucket: 'church-prayer-app.appspot.com',
+    apiKey: 'AIzaSyBLynU_hVQxYZUXD9dYTVYaf8_-c9-8a9Y', 
+    appId: '1:19817451561:web:166687df2ec2a373648c38',
+    messagingSenderId: '19817451561',
+    projectId: 'church-prayer-app-57370',
+    databaseURL: 'https://church-prayer-app-57370-default-rtdb.asia-southeast1.firebasedatabase.app', 
+    storageBucket: 'church-prayer-app-57370.firebasestorage.app',
   );
 }
