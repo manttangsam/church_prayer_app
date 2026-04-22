@@ -27,6 +27,7 @@ class PrayerApp extends StatelessWidget {
   );
 }
 
+// 기도의 향(물방울) 그래픽
 class WaterDropPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -97,7 +98,7 @@ class _PrayerTimerPageState extends State<PrayerTimerPage> with SingleTickerProv
     }
   }
 
-  // 카운트 감소 공통 로직 (트랜잭션)
+  // 온라인 카운트 감소 (트랜잭션 방식)
   void _decrementCount() {
     _dbRef.child('online_count').runTransaction((Object? count) {
       int currentCount = (count as int? ?? 0);
@@ -125,7 +126,9 @@ class _PrayerTimerPageState extends State<PrayerTimerPage> with SingleTickerProv
 
   void _toggleTimer() async {
     if (_isRunning) {
+      // 기도 중단 시 카운트 감소
       _decrementCount();
+      
       int prayedMinutes = (_seconds / 60).round();
       if (prayedMinutes > 0) {
         _dbRef.child('total_minutes').set(ServerValue.increment(prayedMinutes));
@@ -138,11 +141,11 @@ class _PrayerTimerPageState extends State<PrayerTimerPage> with SingleTickerProv
       setState(() { _isRunning = false; _seconds = 0; _waterDrops.clear(); });
       _timer?.cancel();
     } else {
+      // 기도 시작 시 카운트 증가
       _dbRef.child('online_count').set(ServerValue.increment(1));
-      _dbRef.child('online_count').onDisconnect().runTransaction((Object? count) {
-        int currentCount = (count as int? ?? 0);
-        return Transaction.success(currentCount > 0 ? currentCount - 1 : 0);
-      });
+      
+      // [수정완료] 비정상 종료 시 서버가 숫자를 1 깎도록 예약 (안전한 set 방식)
+      _dbRef.child('online_count').onDisconnect().set(ServerValue.increment(-1));
 
       setState(() => _isRunning = true);
       _timer = Timer.periodic(const Duration(seconds: 1), (t) {
